@@ -18,6 +18,9 @@ class Server:
         self.running = threading.Event()
         self.UDP_socket = None
         self.TCP_socket = None
+        self.broadcast_thread = None
+        self.listen_TCP_thread = None
+        self.listen_UDP_thread = None
 
     def start(self):
         self.running.set()
@@ -38,18 +41,23 @@ class Server:
 
         print(f'UDP port: {self.udp_port}, TCP port: {self.tcp_port}')
 
-        broadcast_thread = threading.Thread(target=self.broadcast_offers)
-        broadcast_thread.start()
+        # Create threads for broadcasting the server's IP address and listening for TCP and UDP connections
+        # daemon threads will be terminated when the main program exits - safer exit
+        self.broadcast_thread = threading.Thread(target=self.broadcast_offers)
+        self.broadcast_thread.daemon = True
+        self.broadcast_thread.start()
 
-        listen_TCP_thread = threading.Thread(target=self.listen_for_TCP_connections)
-        listen_TCP_thread.start()
+        self.listen_TCP_thread = threading.Thread(target=self.listen_for_TCP_connections)
+        self.listen_TCP_thread.daemon = True
+        self.listen_TCP_thread.start()
 
-        listen_UDP_thread = threading.Thread(target=self.listen_for_UDP_connections)
-        listen_UDP_thread.start()
+        self.listen_UDP_thread = threading.Thread(target=self.listen_for_UDP_connections)
+        self.listen_UDP_thread.daemon = True
+        self.listen_UDP_thread.start()
 
-        # TODO multithreading doesn't work
+        # Create a thread that waits for the user to press Ctrl+C to stop the server
         try:
-            self.running.wait()
+            self.running.wait()  # Wait until the event is cleared - never
         except KeyboardInterrupt:
             print("Keyboard interrupt received, stopping server.")
             self.stop()
@@ -62,7 +70,6 @@ class Server:
         """
         # Create the message to broadcast
         message = struct.pack('!I B H H', Server.MAGIC_COOKIE, Server.OFFER, self.udp_port, self.tcp_port)
-        # TODO fix this while condition
         while self.running.is_set():
             with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as socket_for_broadcast:
                 socket_for_broadcast.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
@@ -85,14 +92,25 @@ class Server:
                 self.TCP_socket.close()
             except socket.error as e:
                 print(f"Error closing TCP socket: {e}")
+
+        if self.broadcast_thread:
+            self.broadcast_thread.join()
+        if self.listen_TCP_thread:
+            self.listen_TCP_thread.join()
+        if self.listen_UDP_thread:
+            self.listen_UDP_thread.join()
         print('Server stopped')
 
     def listen_for_TCP_connections(self):
-        pass
+        # TODO remove after done debugging
+        while self.running.is_set():
+            print("Listening for TCP connections")
+            time.sleep(3)
 
     def listen_for_UDP_connections(self):
-        # TODO fix this while condition
+        # TODO continue working on this function
         while self.running.is_set():
+            print("Listening for UDP connections")
             readable, _, _ = select.select([self.UDP_socket], [], [], 1)
             for sock in readable:
                 data, addr = sock.recvfrom(1024)
