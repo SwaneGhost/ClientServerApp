@@ -1,3 +1,4 @@
+import math
 import socket
 import struct
 import time
@@ -21,6 +22,7 @@ class Server:
         self.broadcast_thread = None
         self.listen_TCP_thread = None
         self.listen_UDP_thread = None
+        self.udp_mtu = 0
 
     def start(self):
         self.running.set()
@@ -30,6 +32,11 @@ class Server:
             self.UDP_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             self.UDP_socket.bind((self.address, 0))
             self.udp_port = self.UDP_socket.getsockname()[1]
+
+            # Get the maximum segment size of the UDP socket
+            self.udp_mtu = self.UDP_socket.getsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF)
+            # remove our magic cookie message type segment count and segment number and potential udp header
+            self.udp_mtu -= 30
 
             self.TCP_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.TCP_socket.bind((self.address, 0))
@@ -57,7 +64,8 @@ class Server:
 
         # Create a thread that waits for the user to press Ctrl+C to stop the server
         try:
-            self.running.wait()  # Wait until the event is cleared - never
+            while self.running.is_set():
+                time.sleep(1)# Wait until the event is cleared - never
         except KeyboardInterrupt:
             print("Keyboard interrupt received, stopping server.")
             self.stop()
@@ -113,14 +121,42 @@ class Server:
             print("Listening for UDP connections")
             readable, _, _ = select.select([self.UDP_socket], [], [], 1)
             for sock in readable:
-                data, addr = sock.recvfrom(1024)
-                print(f"Received UDP message from {addr}")
-                self.handle_UDP_request(sock)
-
-    def handle_TCP_request(self, sock: socket.socket):
-        pass
+                udp_thread = threading.Thread(target=self.handle_UDP_request, args=(sock,))
+                udp_thread.daemon = True
+                udp_thread.start()
 
     def handle_UDP_request(self, sock: socket.socket):
+        try:
+            data, addr = sock.recvfrom(1024)
+            print(f"Handling UDP message from {addr}: {data}")
+            # Handle the received data here
+            # check for magic cookie for 4 then 1 then 8 bytes
+            magic_cookie, message_type, file_size = struct.unpack('!I B Q', data[:13])
+            if magic_cookie != Server.MAGIC_COOKIE:
+                print("Invalid magic cookie")
+                return
+            if message_type != Server.REQUEST:
+                print(f"Invalid message type from {addr}")
+                return
+
+            print(f"Valid request from {addr}: file size {file_size} bytes")
+
+            number_of_segments = math.ceil(file_size / self.udp_mtu)
+            # Create a response message sized file_size
+            header = struct.pack('I B Q', Server.MAGIC_COOKIE, Server.PAYLOAD, number_of_segments)
+            current_segment = 0
+            data = b'\xff' * file_size
+            for i in range(number_of_segments):
+                segment = header + struct.pack('Q', current_segment)
+                with_payload = segment + data[i * self.udp_mtu: min((i + 1) * self.udp_mtu,len(data))]
+                sock.sendto(with_payload, addr)
+                current_segment += 1
+
+        except socket.error as e:
+            print(f"Error handling UDP request: {e}")
+
+
+    def handle_TCP_request(self, sock: socket.socket):
         pass
 
 if __name__ == '__main__':
