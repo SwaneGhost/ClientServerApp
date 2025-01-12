@@ -3,7 +3,7 @@ import socket
 import struct
 import time
 import threading
-import select
+
 
 class Server:
     """
@@ -19,6 +19,7 @@ class Server:
     OFFER = 0x2
     REQUEST = 0x3
     PAYLOAD = 0x4
+    PORT_FOR_OFFERS = 50000
 
     def __init__(self):
         self.address = socket.gethostbyname(socket.gethostname())
@@ -44,7 +45,7 @@ class Server:
         try:
             # Create a UDP socket
             self.UDP_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            self.UDP_socket.bind((self.address, 0))
+            # self.UDP_socket.bind((self.address, 0)) #CONSIDER BINDING TO A SPECIFIC PORT
             self.udp_port = self.UDP_socket.getsockname()[1]
 
             # Get the maximum segment size of the UDP socket
@@ -54,7 +55,7 @@ class Server:
 
             # Create a TCP socket
             self.TCP_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            self.TCP_socket.bind((self.address, 0))
+            # self.TCP_socket.bind((self.address, 0)) #CONSIDER BINDING TO A SPECIFIC PORT
             self.tcp_port = self.TCP_socket.getsockname()[1]
         except socket.error as e:
             print(f'Error: {e}')
@@ -69,28 +70,15 @@ class Server:
 
         # Broadcast Thread to send offers to the network
         self.broadcast_thread = threading.Thread(target=self.broadcast_offers)
-        self.broadcast_thread.daemon = True
         self.broadcast_thread.start()
 
         # Listen for TCP connections Thread
         self.listen_TCP_thread = threading.Thread(target=self.listen_for_TCP_connections)
-        self.listen_TCP_thread.daemon = True
         self.listen_TCP_thread.start()
 
         # Listen for UDP connections Thread
         self.listen_UDP_thread = threading.Thread(target=self.listen_for_UDP_connections)
-        self.listen_UDP_thread.daemon = True
         self.listen_UDP_thread.start()
-
-        # No other way if the server is running on windows
-        try:
-            while self.running.is_set():
-                time.sleep(1)   # Wait until the event is cleared - never
-        except KeyboardInterrupt:
-            print("Keyboard interrupt received, stopping server.")
-        finally:
-            self.stop()
-
 
     def broadcast_offers(self):
         """
@@ -106,7 +94,7 @@ class Server:
             with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as socket_for_broadcast:
                 socket_for_broadcast.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
                 try:
-                    socket_for_broadcast.sendto(message, ('<broadcast>', 50000))
+                    socket_for_broadcast.sendto(message, ('<broadcast>', Server.PORT_FOR_OFFERS))
                 except socket.error as e:
                     print(f"Broadcast error: {e}")
             time.sleep(1)
@@ -148,13 +136,18 @@ class Server:
         # TODO test this function
         self.TCP_socket.listen(10)  # Put the TCP socket in listening mode with a backlog of 10
         while self.running.is_set():
-            # TODO remove after debugging
-            print("Listening for TCP connections")
-            readable, _, _ = select.select([self.TCP_socket], [], [], 1)
-            for sock in readable:
-                tcp_thread = threading.Thread(target=self.handle_TCP_request, args=(sock,))
+            try:
+                # Blocking call to accept
+                # TODO remove after debugging
+
+                print("Listening for TCP connections")
+                client_socket, client_address = self.TCP_socket.accept()
+                tcp_thread = threading.Thread(target=self.handle_TCP_request, args=(client_socket, client_address))
                 tcp_thread.daemon = True
                 tcp_thread.start()
+            except socket.error as e:
+                if self.running.is_set():
+                    print(f"Error accepting TCP connection: {e}")
 
     def listen_for_UDP_connections(self) -> None:
         """
@@ -164,29 +157,35 @@ class Server:
         """
         # TODO test this function
         while self.running.is_set():
-            # TODO remove after debugging
-            print("Listening for UDP connections")
-            # Select returns a list of sockets that are ready to be read, write, or have errors
-            readable, _, _ = select.select([self.UDP_socket], [], [], 1)
-            # sock is the socket that is ready to be read
-            for sock in readable:
-                udp_thread = threading.Thread(target=self.handle_UDP_request, args=(sock,))
+            try:
+                # blocking call to recvfrom
+                # TODO remove after debugging
+
+                print("Listening for UDP connections")
+                data, addr = self.UDP_socket.recvfrom(1024)
+                udp_thread = threading.Thread(target=self.handle_UDP_request, args=(data, addr))
                 udp_thread.daemon = True
                 udp_thread.start()
+            except socket.error as e:
+                if self.running.is_set():
+                    print(f"Error receiving UDP data: {e}")
 
-    def handle_UDP_request(self, sock: socket.socket) -> None:
+    def handle_UDP_request(self, data, addr) -> None:
         """
         Handles the received UDP request
 
-        :param sock: Socket to handle
+
         :return: None
         """
         try:
-            data, addr = sock.recvfrom(1024)
             # TODO remove after debugging
             print(f"Handling UDP message from {addr}: {data}")
             # Handle the received data here
             # check for magic cookie for 4 then 1 then 8 bytes
+            if len(data) < 13:
+                # TODO remove after debugging
+                print(f"Invalid message from {addr}")
+                return
             magic_cookie, message_type, file_size = struct.unpack('!I B Q', data[:13])
             if magic_cookie != Server.MAGIC_COOKIE:
                 # TODO remove after debugging
@@ -206,26 +205,21 @@ class Server:
             data = b'\xff' * file_size
             for i in range(number_of_segments):
                 segment = header + struct.pack('Q', current_segment)
-                with_payload = segment + data[i * self.udp_mtu: min((i + 1) * self.udp_mtu,len(data))]
-                sock.sendto(with_payload, addr)
+                with_payload = segment + data[i * self.udp_mtu: min((i + 1) * self.udp_mtu, len(data))]
+                self.UDP_socket.sendto(with_payload, addr)
                 current_segment += 1
 
         except socket.error as e:
             print(f"Error handling UDP request: {e}")
 
-
-    def handle_TCP_request(self, sock: socket.socket):
+    def handle_TCP_request(self, client_socket, client_address) -> None:
         """
         Handles the received TCP request
 
-        :param sock: Socket to handle
         :return: None
         """
-        client_socket = None
-        client_address = None
-        try:
-            client_socket, client_address = sock.accept()
 
+        try:
             # No need for magic cookie, message type, segment count, and segment number
             # Client sends the size of the file as a string ending with a newline
 
@@ -255,6 +249,13 @@ class Server:
         finally:
             client_socket.close()
 
+
 if __name__ == '__main__':
     server = Server()
-    server.start()
+    try:
+        server.start()
+    except KeyboardInterrupt:
+        server.stop()
+
+#TODO handle corrupted messages
+#TODO handle client hanging up on tcp connection
