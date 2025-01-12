@@ -1,7 +1,7 @@
 import socket
 import struct
 import threading
-from scapy.all import sniff
+import time
 from scapy.layers.inet import UDP, IP
 
 # TODO check the reading size of the message
@@ -23,6 +23,7 @@ class Client:
     OFFER = 0x2
     REQUEST = 0x3
     PAYLOAD = 0x4
+    PORT_FOR_OFFERS = 50000
 
     def __init__(self):
         self.server_address = None
@@ -33,8 +34,6 @@ class Client:
         self.tcp_socket = 0
         self.udp_threads = []
         self.tcp_threads = []
-        self.broadcast_thread = None  #??? WHICH ONES DO WE NEED
-
         self.udp_mtu = 0
 
     def start(self):
@@ -47,10 +46,22 @@ class Client:
         data_amount = get_user_input()
 
         # listen to offer request
-        print("“Client started, listening for offer requests...”.")
+        print("Client started, listening for offer requests...")
         # listen to first offer and stop listening
-        sniff(prn=self.packet_callback, store=1, stop_filter=self.packet_callback)
-        # take out server address
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as offer_socket:
+            offer_socket.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+            offer_socket.bind((self.address, Client.PORT_FOR_OFFERS))
+            while True:
+                data, addr = offer_socket.recvfrom(1024)
+                if len(data) >= 9:
+                    magic_cookie, message_type, udp_port, tcp_port = struct.unpack('!I B H H', data[:9])
+                    if magic_cookie == Client.MAGIC_COOKIE and message_type == Client.OFFER:
+                        print(f"Received offer from {addr[0]}")
+                        self.server_address = addr[0]
+                        self.udp_port = udp_port
+                        self.tcp_port = tcp_port
+                        break
+
         # send udp requests
         for i in range(num_udp_requests):
             print(f"Sending UDP request {i + 1} to {self.address}")
@@ -61,30 +72,64 @@ class Client:
             print(f"Sending TCP request {i + 1} to {self.address}")
             self.tcp_threads.append(threading.Thread(target=self.tcp_request, args=(data_amount,)))
             self.tcp_threads[i].start()
-        #TODO time the responses
-
+        # TODO time the responses
+        #
         return
 
     def udp_request(self, data_amount) -> None:
         try:
-            new_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            # set so two clients can use the same port when one is done
-            #new_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
-            # new_socket.bind((self.address, 0))
-            packet = struct.pack('!I B Q', Client.MAGIC_COOKIE, Client.REQUEST, data_amount)
-            new_socket.sendto(packet, (self.server_address, self.udp_port))
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as new_socket:
+                # set so two clients can use the same port when one is done
+                # new_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+                # new_socket.bind((self.address, 0))
+                packet = struct.pack('!I B Q', Client.MAGIC_COOKIE, Client.REQUEST, data_amount)
+                new_socket.sendto(packet, (self.server_address, self.udp_port))
+                # TODO FIGURE OUT TIMEOUT BEFORE FIRST SEGMENT
+                new_socket.settimeout(1)
+                start_time = time.time()
+                arrived_segments = 0
+                total_segments = 1
+                while True:
+                    try:
+                        data, _ = new_socket.recvfrom(4096)
+                        if len(data) < 13:
+                            continue
+
+                        magic_cookie, message_type, total_segments = struct.unpack('!I B Q', data[:13])
+                        if magic_cookie != Client.MAGIC_COOKIE or message_type != Client.PAYLOAD:
+                            continue
+
+                        arrived_segments += 1
+
+                    except socket.timeout:
+                        new_socket.close()
+                        print("Timeout")
+                        break
+
+                print(f"Arrived segments: {arrived_segments}/{total_segments}")
+
         except socket.error as e:
             print(f'Error: {e}')
             return
 
     def tcp_request(self, data_amount) -> None:
         try:
-            new_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            new_socket.connect((self.server_address, self.tcp_port))
-            # new_socket.bind((self.address, 0))
-            packet = struct.pack('!I B Q', Client.MAGIC_COOKIE, Client.REQUEST, data_amount)
-            new_socket.send(packet)
-            new_socket.close()
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as new_socket:
+                new_socket.connect((self.server_address, self.tcp_port))
+                # new_socket.bind((self.address, 0))
+                # Convert the file size to a string and append a newline character
+                file_size_string = f"{data_amount}\n"
+                packet = file_size_string.encode()
+                new_socket.send(packet)
+                # Receive the response
+                received_data = b''
+                while True:
+                    chunk = new_socket.recv(4096)
+                    if not chunk:
+                        break
+                    received_data += chunk
+                # TODO time the response HOW??
+                new_socket.close()
         except socket.error as e:
             print(f'Error: {e}')
             return

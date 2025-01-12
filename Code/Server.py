@@ -45,7 +45,7 @@ class Server:
         try:
             # Create a UDP socket
             self.UDP_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            # self.UDP_socket.bind((self.address, 0)) #CONSIDER BINDING TO A SPECIFIC PORT
+            self.UDP_socket.bind((self.address, 0)) #CONSIDER BINDING TO A SPECIFIC PORT
             self.udp_port = self.UDP_socket.getsockname()[1]
 
             # Get the maximum segment size of the UDP socket
@@ -55,7 +55,7 @@ class Server:
 
             # Create a TCP socket
             self.TCP_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            # self.TCP_socket.bind((self.address, 0)) #CONSIDER BINDING TO A SPECIFIC PORT
+            self.TCP_socket.bind((self.address, 0)) #CONSIDER BINDING TO A SPECIFIC PORT
             self.tcp_port = self.TCP_socket.getsockname()[1]
         except socket.error as e:
             print(f'Error: {e}')
