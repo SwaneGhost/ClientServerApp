@@ -4,8 +4,6 @@ import threading
 import time
 from scapy.layers.inet import UDP, IP
 
-# TODO check the reading size of the message
-
 """
 workflow we understood so far:
 1. we ask user for parameters to set up client
@@ -13,8 +11,6 @@ workflow we understood so far:
 3. client sends requests to server according to the parameters, x udp requests y tcp requests of size z data amount
 4. client listens to each server response and times it
 5. when all responses complete client returns to step 1 ?? or just ends
-
-
 """
 
 
@@ -35,15 +31,18 @@ class Client:
         self.udp_threads = []
         self.tcp_threads = []
         self.udp_mtu = 0
+        self.num_udp_requests = 0
+        self.num_tcp_requests = 0
+        self.data_amount = 0
 
     def start(self):
         # request user input for parameters how many tcp and udp requests and how much data
         print("Enter the number of UDP requests: ")
-        num_udp_requests = get_user_input()
+        self.num_udp_requests = get_user_input()
         print("Enter the number of TCP requests: ")
-        num_tcp_requests = get_user_input()
+        self.num_tcp_requests = get_user_input()
         print("Enter the amount of data (in bytes): ")
-        data_amount = get_user_input()
+        self.data_amount = get_user_input()
 
         # listen to offer request
         print("Client started, listening for offer requests...")
@@ -63,42 +62,43 @@ class Client:
                         break
 
         # send udp requests
-        for i in range(num_udp_requests):
+        for i in range(self.num_udp_requests):
             print(f"Sending UDP request {i + 1} to {self.address}")
-            self.udp_threads.append(threading.Thread(target=self.udp_request, args=(data_amount,)))
+            self.udp_threads.append(threading.Thread(target=self.udp_request, args=(i,)))
             self.udp_threads[i].start()
         # send tcp requests
-        for i in range(num_tcp_requests):
+        for i in range(self.num_tcp_requests):
             print(f"Sending TCP request {i + 1} to {self.address}")
-            self.tcp_threads.append(threading.Thread(target=self.tcp_request, args=(data_amount,)))
+            self.tcp_threads.append(threading.Thread(target=self.tcp_request, args=(i,)))
             self.tcp_threads[i].start()
-        # TODO time the responses
-        #
         return
 
-    def udp_request(self, data_amount) -> None:
+    def udp_request(self, thead_number: int) -> None:
         try:
             with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as new_socket:
                 # set so two clients can use the same port when one is done
                 # new_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
-                # new_socket.bind((self.address, 0))
-                packet = struct.pack('!I B Q', Client.MAGIC_COOKIE, Client.REQUEST, data_amount)
+                new_socket.bind((self.address, 0))
+                packet = struct.pack('!I B Q', Client.MAGIC_COOKIE, Client.REQUEST, self.data_amount)
                 new_socket.sendto(packet, (self.server_address, self.udp_port))
-                # TODO FIGURE OUT TIMEOUT BEFORE FIRST SEGMENT
                 new_socket.settimeout(1)
                 start_time = time.time()
                 arrived_segments = 0
                 total_segments = 1
+                total_data = 0
                 while True:
                     try:
-                        data, _ = new_socket.recvfrom(4096)
+                        data, _ = new_socket.recvfrom(1024)
                         if len(data) < 13:
                             continue
 
                         magic_cookie, message_type, total_segments = struct.unpack('!I B Q', data[:13])
                         if magic_cookie != Client.MAGIC_COOKIE or message_type != Client.PAYLOAD:
+                            print("Invalid packet")
                             continue
 
+                        data = data[13:]
+                        total_data += len(data)
                         arrived_segments += 1
 
                     except socket.timeout:
@@ -106,30 +106,46 @@ class Client:
                         print("Timeout")
                         break
 
-                print(f"Arrived segments: {arrived_segments}/{total_segments}")
+                end_time = time.time()
+                total_time = end_time - start_time
+                print(f'UDP transfer #{thead_number} finished, '
+                      f'total time: {total_time:.2f} seconds, '
+                      f'total speed: {total_data * 8 / total_time:.2f} bits/second, '
+                      f'percentage of packets received successfully: {arrived_segments / total_segments * 100:.2f}%')
 
         except socket.error as e:
-            print(f'Error: {e}')
+            print(f'UDP Error: {e}')
             return
 
-    def tcp_request(self, data_amount) -> None:
+    def tcp_request(self, thread_number :int) -> None:
         try:
-            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as new_socket:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as new_socket:
                 new_socket.connect((self.server_address, self.tcp_port))
                 # new_socket.bind((self.address, 0))
                 # Convert the file size to a string and append a newline character
-                file_size_string = f"{data_amount}\n"
+                file_size_string = f'{self.data_amount}\n'
                 packet = file_size_string.encode()
                 new_socket.send(packet)
+
+                # start timing the response
+                start_time = time.time()
+
                 # Receive the response
                 received_data = b''
                 while True:
-                    chunk = new_socket.recv(4096)
+                    chunk = new_socket.recv(1460)
                     if not chunk:
                         break
                     received_data += chunk
-                # TODO time the response HOW??
                 new_socket.close()
+
+                # end timing the response
+                end_time = time.time()
+                elapsed_time_sec = end_time - start_time
+                print(f'TCP transfer #{thread_number} finished, '
+                      f'total time: {elapsed_time_sec:.2f} seconds, '
+                      f'total speed: {self.data_amount * 8 / elapsed_time_sec:.2f} bits/second')
+
         except socket.error as e:
             print(f'Error: {e}')
             return
