@@ -5,12 +5,13 @@ import time
 from scapy.layers.inet import UDP, IP
 
 """
-workflow we understood so far:
-1. we ask user for parameters to set up client
-2. client listens to offer request and accepts the first offer and stops listening
-3. client sends requests to server according to the parameters, x udp requests y tcp requests of size z data amount
-4. client listens to each server response and times it
-5. when all responses complete client returns to step 1 ?? or just ends
+missions:
+1. add keyboard interrupt to stop the client and close the sockets 
+2. check keyboard interrupt in the server
+3. add fun prints and colors
+4. choose team name - WAN DIRECTION
+5. add comments to the code
+6. check on two computers
 """
 
 
@@ -46,32 +47,45 @@ class Client:
 
         # listen to offer request
         print("Client started, listening for offer requests...")
-        # listen to first offer and stop listening
-        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as offer_socket:
-            offer_socket.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-            offer_socket.bind((self.address, Client.PORT_FOR_OFFERS))
-            while True:
-                data, addr = offer_socket.recvfrom(1024)
-                if len(data) >= 9:
-                    magic_cookie, message_type, udp_port, tcp_port = struct.unpack('!I B H H', data[:9])
-                    if magic_cookie == Client.MAGIC_COOKIE and message_type == Client.OFFER:
-                        print(f"Received offer from {addr[0]}")
-                        self.server_address = addr[0]
-                        self.udp_port = udp_port
-                        self.tcp_port = tcp_port
-                        break
+        while True:
+            # listen to first offer and stop listening
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as offer_socket:
+                offer_socket.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+                offer_socket.bind((self.address, Client.PORT_FOR_OFFERS))
+                while True:
+                    data, addr = offer_socket.recvfrom(1024)
+                    if len(data) >= 9:
+                        magic_cookie, message_type, udp_port, tcp_port = struct.unpack('!I B H H', data[:9])
+                        if magic_cookie == Client.MAGIC_COOKIE and message_type == Client.OFFER:
+                            print(f"Received offer from {addr[0]}")
+                            self.server_address = addr[0]
+                            self.udp_port = udp_port
+                            self.tcp_port = tcp_port
+                            break
 
-        # send udp requests
-        for i in range(self.num_udp_requests):
-            print(f"Sending UDP request {i + 1} to {self.address}")
-            self.udp_threads.append(threading.Thread(target=self.udp_request, args=(i,)))
-            self.udp_threads[i].start()
-        # send tcp requests
-        for i in range(self.num_tcp_requests):
-            print(f"Sending TCP request {i + 1} to {self.address}")
-            self.tcp_threads.append(threading.Thread(target=self.tcp_request, args=(i,)))
-            self.tcp_threads[i].start()
-        return
+            # send udp requests
+            for i in range(self.num_udp_requests):
+                print(f"Sending UDP request {i + 1} to {self.address}")
+                self.udp_threads.append(threading.Thread(target=self.udp_request, args=(i+1,)))
+                self.udp_threads[i].start()
+            # send tcp requests
+            for i in range(self.num_tcp_requests):
+                print(f"Sending TCP request {i + 1} to {self.address}")
+                self.tcp_threads.append(threading.Thread(target=self.tcp_request, args=(i+1,)))
+                self.tcp_threads[i].start()
+
+            # wait for all threads to finish
+            # join all udp threads
+            for thread in self.udp_threads:
+                thread.join()
+            # join all tcp threads
+            for thread in self.tcp_threads:
+                thread.join()
+
+            self.udp_threads.clear()
+            self.tcp_threads.clear()
+            print("All transfers complete, listening to offer requests")
+
 
     def udp_request(self, thead_number: int) -> None:
         try:
@@ -80,9 +94,9 @@ class Client:
                 # new_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
                 new_socket.bind((self.address, 0))
                 packet = struct.pack('!I B Q', Client.MAGIC_COOKIE, Client.REQUEST, self.data_amount)
+                start_time = time.perf_counter()
                 new_socket.sendto(packet, (self.server_address, self.udp_port))
                 new_socket.settimeout(1)
-                start_time = time.time()
                 arrived_segments = 0
                 total_segments = 1
                 total_data = 0
@@ -103,11 +117,10 @@ class Client:
 
                     except socket.timeout:
                         new_socket.close()
-                        print("Timeout")
                         break
 
-                end_time = time.time()
-                total_time = end_time - start_time
+                end_time = time.perf_counter()
+                total_time = end_time - start_time - 1
                 print(f'UDP transfer #{thead_number} finished, '
                       f'total time: {total_time:.2f} seconds, '
                       f'total speed: {total_data * 8 / total_time:.2f} bits/second, '
@@ -125,10 +138,10 @@ class Client:
                 # Convert the file size to a string and append a newline character
                 file_size_string = f'{self.data_amount}\n'
                 packet = file_size_string.encode()
+                start_time = time.perf_counter()
                 new_socket.send(packet)
 
-                # start timing the response
-                start_time = time.time()
+
 
                 # Receive the response
                 received_data = b''
@@ -140,9 +153,10 @@ class Client:
                 new_socket.close()
 
                 # end timing the response
-                end_time = time.time()
+                end_time = time.perf_counter()
                 elapsed_time_sec = end_time - start_time
-                print(f'TCP transfer #{thread_number} finished, '
+
+            print(f'TCP transfer #{thread_number} finished, '
                       f'total time: {elapsed_time_sec:.2f} seconds, '
                       f'total speed: {self.data_amount * 8 / elapsed_time_sec:.2f} bits/second')
 
