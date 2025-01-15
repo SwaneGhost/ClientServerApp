@@ -129,7 +129,7 @@ class Client:
         # Handle TCP request
         try:
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as new_socket:
-                new_socket.settimeout(10)
+                new_socket.settimeout(20)
                 new_socket.connect((self.server_address, self.tcp_port))
                 file_size_string = f'{self.data_amount}\n'
                 packet = file_size_string.encode()

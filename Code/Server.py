@@ -108,7 +108,7 @@ class Server:
         while self.running.is_set():
             try:
                 client_socket, client_address = self.TCP_socket.accept()
-                tcp_thread = threading.Thread(target=self.handle_TCP_request, args=(client_socket, client_address))
+                tcp_thread = threading.Thread(target=self.handle_TCP_request, args=(client_socket,))
                 tcp_thread.daemon = True
                 tcp_thread.start()
             except socket.error as e:
