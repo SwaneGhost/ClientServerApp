@@ -91,7 +91,6 @@ class Client:
         try:
             with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as new_socket:
                 # set so two clients can use the same port when one is done
-                # new_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
                 new_socket.bind((self.address, 0))
                 packet = struct.pack('!I B Q', Client.MAGIC_COOKIE, Client.REQUEST, self.data_amount)
                 start_time = time.perf_counter()
@@ -119,8 +118,18 @@ class Client:
                         new_socket.close()
                         break
 
+
+                # end timing the response
                 end_time = time.perf_counter()
+
+                # check if server did not respond
+                if end_time == 0:
+                    print(f'Server did not respond to UDP request #{thead_number}')
+                    return
+
+                # calculate the total time and print the results
                 total_time = end_time - start_time - 1
+
                 print(f'UDP transfer #{thead_number} finished, '
                       f'total time: {total_time:.2f} seconds, '
                       f'total speed: {total_data * 8 / total_time:.2f} bits/second, '
@@ -133,6 +142,7 @@ class Client:
     def tcp_request(self, thread_number :int) -> None:
         try:
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as new_socket:
+                new_socket.settimeout(5)
                 new_socket.connect((self.server_address, self.tcp_port))
                 # new_socket.bind((self.address, 0))
                 # Convert the file size to a string and append a newline character
@@ -146,10 +156,16 @@ class Client:
                 # Receive the response
                 received_data = b''
                 while True:
-                    chunk = new_socket.recv(1460)
-                    if not chunk:
-                        break
+                    try:
+                        chunk = new_socket.recv(1460)
+                        if not chunk:
+                            break
+                        received_data += chunk
+                    except socket.timeout:
+                        print(f'TCP request #{thread_number} timed out during recv')
+                        return
                     received_data += chunk
+
                 new_socket.close()
 
                 # end timing the response
@@ -160,8 +176,13 @@ class Client:
                       f'total time: {elapsed_time_sec:.2f} seconds, '
                       f'total speed: {self.data_amount * 8 / elapsed_time_sec:.2f} bits/second')
 
+        except socket.timeout:
+            print(f'Server did not respond to TCP request #{thread_number}')
+            return
+
         except socket.error as e:
             print(f'Error: {e}')
+            new_socket.close()
             return
 
     def packet_callback(self, packet):

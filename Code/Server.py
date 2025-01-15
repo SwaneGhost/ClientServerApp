@@ -49,7 +49,7 @@ class Server:
             self.udp_port = self.UDP_socket.getsockname()[1]
 
             # Get the maximum segment size of the UDP socket
-            self.udp_mtu = 1024 - 29
+            self.udp_mtu = 1024 - 29 
             # remove our magic cookie message type segment count and segment number and potential udp header
             # self.udp_mtu -= 40
 
