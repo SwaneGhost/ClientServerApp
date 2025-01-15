@@ -148,7 +148,6 @@ class Server:
             file_size = int(file_size_string)
             data = b'\xff' * file_size
             client_socket.sendall(data)
-            print(f"{self.GREEN}Sent response to {client_address}{self.RESET}")
         except socket.error as e:
             print(f"{self.RED}Error handling TCP request: {e}{self.RESET}")
         finally:
