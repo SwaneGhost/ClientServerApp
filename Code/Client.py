@@ -4,6 +4,7 @@ import threading
 import time
 from scapy.layers.inet import UDP, IP
 
+
 class Client:
     MAGIC_COOKIE = 0xabcddcba
     OFFER = 0x2
@@ -22,6 +23,7 @@ class Client:
     WHITE = "\033[37m"
 
     def __init__(self):
+        # Initialize client attributes
         self.server_address = None
         self.address = socket.gethostbyname(socket.gethostname())
         self.udp_port = 0
@@ -36,6 +38,7 @@ class Client:
         self.data_amount = 0
 
     def start(self):
+        # Start the client and listen for offer requests
         print(f"{self.CYAN}Enter the number of UDP requests: {self.RESET}")
         self.num_udp_requests = get_user_input()
         print(f"{self.CYAN}Enter the number of TCP requests: {self.RESET}")
@@ -53,12 +56,12 @@ class Client:
                     if len(data) >= 9:
                         magic_cookie, message_type, udp_port, tcp_port = struct.unpack('!I B H H', data[:9])
                         if magic_cookie == Client.MAGIC_COOKIE and message_type == Client.OFFER:
-                            print(f"{self.GREEN}Received offer from {addr[0]}{self.RESET}")
                             self.server_address = addr[0]
                             self.udp_port = udp_port
                             self.tcp_port = tcp_port
                             break
 
+            # Start threads for UDP and TCP requests
             for i in range(self.num_udp_requests):
                 self.udp_threads.append(threading.Thread(target=self.udp_request, args=(i+1,)))
                 self.udp_threads[i].start()
@@ -66,6 +69,7 @@ class Client:
                 self.tcp_threads.append(threading.Thread(target=self.tcp_request, args=(i+1,)))
                 self.tcp_threads[i].start()
 
+            # Wait for all threads to finish
             for thread in self.udp_threads:
                 thread.join()
             for thread in self.tcp_threads:
@@ -76,6 +80,7 @@ class Client:
             print(f"{self.GREEN}All transfers complete, listening to offer requests{self.RESET}")
 
     def udp_request(self, thread_number: int) -> None:
+        # Handle UDP request
         try:
             with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as new_socket:
                 new_socket.bind((self.address, 0))
@@ -121,6 +126,7 @@ class Client:
             return
 
     def tcp_request(self, thread_number: int) -> None:
+        # Handle TCP request
         try:
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as new_socket:
                 new_socket.settimeout(10)
@@ -160,25 +166,28 @@ class Client:
             return
 
     def packet_callback(self, packet):
+        # Handle packet callback for received offers
         if packet.haslayer(IP) and packet.haslayer(UDP):
             data = bytes(packet[UDP].payload)
             if len(data) >= 9:
                 magic_cookie, message_type, udp_port, tcp_port = struct.unpack('!I B H H', data[:9])
                 if magic_cookie == Client.MAGIC_COOKIE and message_type == Client.OFFER:
-                    print(f"{self.GREEN}Received offer from {packet[IP].src}{self.RESET}")
                     self.server_address = packet[IP].src
                     self.udp_port = udp_port
                     self.tcp_port = tcp_port
                     return True
         return False
 
+
 def get_user_input():
+    # Get user input and validate it
     while True:
         check = input()
         if not check.isdigit() or int(check) <= 0:
             print(f"{Client.RED}Please enter a valid integer above 0, non-integer values not allowed{Client.RESET}")
         else:
             return int(check)
+
 
 if __name__ == '__main__':
     client = Client()

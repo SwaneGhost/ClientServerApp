@@ -4,6 +4,7 @@ import struct
 import time
 import threading
 
+
 class Server:
     MAGIC_COOKIE = 0xabcddcba
     OFFER = 0x2
@@ -22,6 +23,7 @@ class Server:
     WHITE = "\033[37m"
 
     def __init__(self):
+        # Initialize server attributes
         self.address = socket.gethostbyname(socket.gethostname())
         self.udp_port = 0
         self.tcp_port = 0
@@ -34,15 +36,18 @@ class Server:
         self.udp_mtu = 0
 
     def start(self) -> None:
+        # Start the server and begin broadcasting and listening for connections
         self.running.set()
         print(f'{self.GREEN}Server started, listening on IP address {self.address}{self.RESET}')
 
         try:
+            # Create and bind UDP socket
             self.UDP_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             self.UDP_socket.bind((self.address, 0))
             self.udp_port = self.UDP_socket.getsockname()[1]
             self.udp_mtu = 1024 - 29
 
+            # Create and bind TCP socket
             self.TCP_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.TCP_socket.bind((self.address, 0))
             self.tcp_port = self.TCP_socket.getsockname()[1]
@@ -51,6 +56,7 @@ class Server:
             self.stop()
             return
 
+        # Start threads for broadcasting and listening for connections
         self.broadcast_thread = threading.Thread(target=self.broadcast_offers)
         self.broadcast_thread.start()
 
@@ -60,9 +66,8 @@ class Server:
         self.listen_UDP_thread = threading.Thread(target=self.listen_for_UDP_connections)
         self.listen_UDP_thread.start()
 
-        print(f"{self.GREEN}Server listening on UDP port {self.udp_port} and TCP port {self.tcp_port}{self.RESET}")
-
     def broadcast_offers(self) -> None:
+        # Broadcast the server's IP address, UDP port, and TCP port to the network
         message = struct.pack('!I B H H', Server.MAGIC_COOKIE, Server.OFFER, self.udp_port, self.tcp_port)
         while self.running.is_set():
             with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as socket_for_broadcast:
@@ -74,6 +79,7 @@ class Server:
             time.sleep(1)
 
     def stop(self) -> None:
+        # Stop the server and close all sockets and threads
         self.running.clear()
         if self.UDP_socket:
             try:
@@ -87,6 +93,7 @@ class Server:
             except socket.error as e:
                 print(f"{self.RED}Error closing TCP socket: {e}{self.RESET}")
 
+        # Wait for all threads to finish
         if self.broadcast_thread and self.broadcast_thread.is_alive():
             self.broadcast_thread.join()
         if self.listen_TCP_thread and self.listen_TCP_thread.is_alive():
@@ -96,7 +103,8 @@ class Server:
         print(f'{self.GREEN}Server closed successfully{self.RESET}')
 
     def listen_for_TCP_connections(self) -> None:
-        self.TCP_socket.listen(10)
+        # Listen for incoming TCP connections and handle them
+        self.TCP_socket.listen(1000)
         while self.running.is_set():
             try:
                 client_socket, client_address = self.TCP_socket.accept()
@@ -108,6 +116,7 @@ class Server:
                     print(f"{self.RED}Error accepting TCP connection: {e}{self.RESET}")
 
     def listen_for_UDP_connections(self) -> None:
+        # Listen for incoming UDP connections and handle them
         while self.running.is_set():
             try:
                 data, addr = self.UDP_socket.recvfrom(1024)
@@ -119,13 +128,13 @@ class Server:
                     print(f"{self.RED}Error receiving UDP data: {e}{self.RESET}")
 
     def handle_UDP_request(self, data: list, addr: str) -> None:
+        # Handle incoming UDP requests
         try:
             if len(data) < 13:
                 return
             magic_cookie, message_type, file_size = struct.unpack('!I B Q', data[:13])
             if magic_cookie != Server.MAGIC_COOKIE or message_type != Server.REQUEST:
                 return
-
             number_of_segments = math.ceil(file_size / self.udp_mtu)
             current_segment = 0
             data = b'\xff' * file_size
@@ -138,7 +147,8 @@ class Server:
         except socket.error as e:
             print(f"{self.RED}Error handling UDP request: {e}{self.RESET}")
 
-    def handle_TCP_request(self, client_socket: socket.socket, client_address: str) -> None:
+    def handle_TCP_request(self, client_socket: socket.socket) -> None:
+        # Handle incoming TCP requests
         try:
             file_size_string = client_socket.recv(1024).decode().strip()
             if not file_size_string.isdigit():
@@ -152,6 +162,7 @@ class Server:
             print(f"{self.RED}Error handling TCP request: {e}{self.RESET}")
         finally:
             client_socket.close()
+
 
 if __name__ == '__main__':
     server = Server()
